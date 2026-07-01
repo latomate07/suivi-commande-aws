@@ -1,0 +1,32 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Squelette de l'application serverless de suivi de commande.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: suivi-commande
+  EnvironmentName:
+    Type: String
+    Default: dev
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    MemorySize: 256
+    Timeout: 15
+    Tracing: Active
+    Environment:
+      Variables:
+        PROJECT_NAME: !Ref ProjectName
+        ENVIRONMENT_NAME: !Ref EnvironmentName
+
+Resources:
+  # Ajouter ici les fonctions Lambda, API Gateway, SQS, DynamoDB, SNS,
+  # EventBridge et CloudWatch selon les besoins du projet.
+
+Outputs:
+  ProjectName:
+    Value: !Ref ProjectName
+  EnvironmentName:
+    Value: !Ref EnvironmentName

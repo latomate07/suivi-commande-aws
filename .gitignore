@@ -1,0 +1,23 @@
+# Node / frontend
+node_modules/
+dist/
+build/
+coverage/
+.next/
+out/
+.vite/
+
+# Backend / serverless
+.aws-sam/
+.serverless/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE / OS
+.DS_Store
+.vscode/*.code-workspace
