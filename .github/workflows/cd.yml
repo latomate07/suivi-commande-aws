@@ -1,0 +1,57 @@
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack_name:
+        description: AWS SAM stack name
+        required: true
+        default: suivi-commande
+      aws_region:
+        description: AWS region
+        required: true
+        default: eu-west-1
+      environment_name:
+        description: Environment label passed to the template
+        required: true
+        default: dev
+
+jobs:
+  deploy:
+    name: Deploy SAM stack
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_name }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+
+      - name: Setup AWS SAM
+        uses: aws-actions/setup-sam@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Build application
+        run: sam build --template-file template.yml
+
+      - name: Deploy application
+        run: |
+          sam deploy \
+            --template-file .aws-sam/build/template.yaml \
+            --stack-name "${{ inputs.stack_name }}" \
+            --region "${{ inputs.aws_region }}" \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --resolve-s3 \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM

@@ -1,0 +1,7 @@
+[tools]
+node = "20.12.2"
+python = "3.12.4"
+ruby = "3.3.4"
+
+[env]
+CI = "true"

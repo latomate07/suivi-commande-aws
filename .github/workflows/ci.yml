@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  validate-template:
+    name: Validate SAM template
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+
+      - name: Validate template syntax
+        run: ruby -e "require 'yaml'; YAML.load_file('template.yml'); puts 'template.yml OK'"
+
+      - name: Check repository skeleton
+        run: |
+          test -d backend/src/handlers
+          test -d web_suivi/src
+          test -d web_stock/src
+          test -f template.yml
