@@ -52,6 +52,8 @@ jobs:
         run: sam build --template-file template.yml
 
       - name: Deploy application
+        id: sam_deploy
+        continue-on-error: true
         run: |
           sam deploy \
             --template-file .aws-sam/build/template.yaml \
@@ -61,3 +63,27 @@ jobs:
             --no-fail-on-empty-changeset \
             --resolve-s3 \
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
+
+      - name: Show CloudFormation failure details
+        if: steps.sam_deploy.outcome == 'failure'
+        run: |
+          echo "SAM deploy failed. Dumping stack diagnostics..."
+          echo "--- Target stack events ---"
+          aws cloudformation describe-stack-events \
+            --stack-name "${{ inputs.stack_name }}" \
+            --region "${{ inputs.aws_region }}" \
+            --max-items 30 || true
+
+          echo "--- SAM managed stack events ---"
+          aws cloudformation describe-stack-events \
+            --stack-name aws-sam-cli-managed-default \
+            --region "${{ inputs.aws_region }}" \
+            --max-items 30 || true
+
+          echo "--- SAM managed stack status ---"
+          aws cloudformation describe-stacks \
+            --stack-name aws-sam-cli-managed-default \
+            --region "${{ inputs.aws_region }}" || true
+
+          echo "Deploy failed. Check ResourceStatusReason lines above."
+          exit 1
