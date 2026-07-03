@@ -11,3 +11,7 @@ Dossier réservé au backend serverless.
 - `src/events/`: objets ou contrats d'événements
 - `src/shared/`: utilitaires communs
 - `tests/`: tests automatisés
+
+## Point de depart
+
+- `src/handlers/getOrders.ts`: Lambda HTTP de test pour valider le deploiement via `GET /orders`

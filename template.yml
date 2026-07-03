@@ -22,11 +22,41 @@ Globals:
         ENVIRONMENT_NAME: !Ref EnvironmentName
 
 Resources:
-  # Ajouter ici les fonctions Lambda, API Gateway, SQS, DynamoDB, SNS,
-  # EventBridge et CloudWatch selon les besoins du projet.
+  OrdersApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvironmentName}-api"
+      StageName: !Ref EnvironmentName
+      EndpointConfiguration: REGIONAL
+
+  GetOrdersFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - handlers/getOrders.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: backend/src
+      Handler: handlers/getOrders.handler
+      Description: Lambda de test pour valider le deploiement initial.
+      Events:
+        GetOrdersApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrdersApi
+            Path: /orders
+            Method: get
 
 Outputs:
   ProjectName:
     Value: !Ref ProjectName
   EnvironmentName:
     Value: !Ref EnvironmentName
+  OrdersApiUrl:
+    Description: URL de test exposee par API Gateway
+    Value: !Sub "https://${OrdersApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}/orders"
