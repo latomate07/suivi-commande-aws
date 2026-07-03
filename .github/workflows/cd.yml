@@ -45,6 +45,9 @@ jobs:
       - name: Install backend dependencies
         run: npm ci --prefix backend
 
+      - name: Install esbuild for SAM bundling
+        run: npm install --global esbuild
+
       - name: Build application
         run: sam build --template-file template.yml
 
