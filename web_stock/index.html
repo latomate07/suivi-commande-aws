@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suivi de commandes</title>
+    <script>
+      if (window.location.port !== "5173" && !window.location.pathname.includes("/dist/")) {
+        window.location.replace(`http://127.0.0.1:5173/${window.location.hash || "#/admin"}`);
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root">
+      <p style="font-family: system-ui, sans-serif; padding: 24px;">
+        Chargement de l'application React. Si cette phrase reste affichée, lance le projet avec
+        <code>npm run dev</code> puis ouvre <code>http://127.0.0.1:5173/#/admin</code>.
+      </p>
+    </div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

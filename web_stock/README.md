@@ -1,5 +1,29 @@
-# Web Stock
+# Web Suivi
 
-Application web dédiée à la gestion du stock.
+Application React dédiée au suivi des commandes et à l'administration des statuts de livraison.
 
-Les développements de cette interface doivent rester isolés dans ce dossier pour faciliter le travail en parallèle.
+## Lancer en local
+
+```bash
+cd web_suivi
+npm install
+npm run dev
+```
+
+Puis ouvrir :
+
+```text
+http://127.0.0.1:5173/admin.html
+http://127.0.0.1:5173/orders.html
+```
+
+## Build
+
+```bash
+npm run build
+```
+
+## Écrans
+
+- `#/admin` : recherche d'une commande et modification du statut.
+- `#/orders` : liste paginée des commandes existantes.
