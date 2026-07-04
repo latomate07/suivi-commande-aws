@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import ProductsPage from "./ProductsPage.jsx";
 
 const API_BASE_URL = "";
 const STORAGE_KEY = "delivery-admin-orders";
@@ -38,7 +39,9 @@ export default function App() {
 
   return (
     <>
-      {route.page === "orders" ? (
+      {route.page === "products" ? (
+        <ProductsPage />
+      ) : route.page === "orders" ? (
         <OrdersPage orders={orders} />
       ) : (
         <AdminPage
@@ -169,6 +172,10 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
         icon="truck"
         actions={
           <>
+            <a className="secondary-button" href="#/products">
+              <Icon name="package" />
+              Produits
+            </a>
             <a className="secondary-button" href="#/orders">
               <Icon name="list" />
               Liste des commandes
@@ -340,10 +347,16 @@ function OrdersPage({ orders }) {
         subtitle="Liste des commandes enregistrées"
         icon="list"
         actions={
-          <a className="secondary-button" href="#/admin">
-            <Icon name="back" />
-            Administration
-          </a>
+          <>
+            <a className="secondary-button" href="#/products">
+              <Icon name="package" />
+              Produits
+            </a>
+            <a className="secondary-button" href="#/admin">
+              <Icon name="back" />
+              Administration
+            </a>
+          </>
         }
       />
 
@@ -700,7 +713,7 @@ function useHashRoute() {
   const [path, queryString = ""] = normalizedHash.split("?");
 
   return {
-    page: path === "/orders" ? "orders" : "admin",
+    page: path === "/orders" ? "orders" : path === "/products" ? "products" : "admin",
     query: new URLSearchParams(queryString)
   };
 }

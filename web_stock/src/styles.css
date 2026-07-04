@@ -651,6 +651,21 @@ tbody tr:last-child td {
   gap: 10px;
 }
 
+.product-order-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.product-order-actions select {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cfd8d1;
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
 .empty-state {
   padding: 30px 20px;
   color: var(--muted);

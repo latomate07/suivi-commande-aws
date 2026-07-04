@@ -11,6 +11,7 @@ out/
 .aws-sam/
 .serverless/
 *.log
+backend/local-server/data.json
 
 # Python
 __pycache__/
