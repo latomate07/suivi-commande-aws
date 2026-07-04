@@ -12,10 +12,45 @@ const PORT = process.env.PORT || 4000;
 const STATUS_FLOW = ["preparation", "expedie", "en_livraison", "livree"];
 const VALID_STATUSES = new Set([...STATUS_FLOW, "incident"]);
 
+function createOrderId() {
+  return `ORD-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+}
+
+function findProductByOrderId(orderId) {
+  return Object.values(products).find((product) => product.order && product.order.id === orderId);
+}
+
+function toOrderResponse(product) {
+  return {
+    orderId: product.order.id,
+    status: product.order.status,
+    previousStatus: product.order.previousStatus,
+    createdAt: product.order.createdAt,
+    updatedAt: product.order.updatedAt,
+    product: {
+      id: product.id,
+      name: product.name,
+      description: product.description,
+      category: product.category,
+      price: product.price,
+      icon: product.icon
+    }
+  };
+}
+
+function backfillOrderIds(loadedProducts) {
+  Object.values(loadedProducts).forEach((product) => {
+    if (product.order && !product.order.id) {
+      product.order.id = createOrderId();
+    }
+  });
+  return loadedProducts;
+}
+
 function loadProducts() {
   if (fs.existsSync(DATA_FILE)) {
     try {
-      return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+      return backfillOrderIds(JSON.parse(fs.readFileSync(DATA_FILE, "utf-8")));
     } catch {
       return createSeedProducts();
     }
@@ -28,6 +63,7 @@ function saveProducts(products) {
 }
 
 let products = loadProducts();
+saveProducts(products);
 
 const app = express();
 app.use(cors());
@@ -63,6 +99,7 @@ app.post("/api/products/:id/order", (req, res) => {
 
   product.stock -= 1;
   product.order = {
+    id: createOrderId(),
     status: "preparation",
     previousStatus: null,
     createdAt: new Date().toISOString(),
@@ -70,6 +107,14 @@ app.post("/api/products/:id/order", (req, res) => {
   };
   saveProducts(products);
   res.status(201).json(product);
+});
+
+app.get("/api/orders/:orderId", (req, res) => {
+  const product = findProductByOrderId(req.params.orderId);
+  if (!product) {
+    return res.status(404).json({ error: "Commande introuvable" });
+  }
+  res.json(toOrderResponse(product));
 });
 
 app.patch("/api/products/:id/order/status", (req, res) => {

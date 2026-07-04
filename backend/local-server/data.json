@@ -11,7 +11,8 @@
       "status": "expedie",
       "previousStatus": "preparation",
       "createdAt": "2026-07-04T08:54:01.385Z",
-      "updatedAt": "2026-07-04T08:56:06.241Z"
+      "updatedAt": "2026-07-04T08:56:06.241Z",
+      "id": "ORD-MR6L7M7AC5CK"
     }
   },
   "PRD-002": {
@@ -23,10 +24,11 @@
     "stock": 14,
     "icon": "⌨️",
     "order": {
+      "id": "ORD-MR6N2GBPEKXX",
       "status": "preparation",
       "previousStatus": null,
-      "createdAt": "2026-07-04T08:54:26.916Z",
-      "updatedAt": "2026-07-04T08:54:26.916Z"
+      "createdAt": "2026-07-04T17:31:15.877Z",
+      "updatedAt": "2026-07-04T17:31:15.877Z"
     }
   },
   "PRD-003": {
@@ -35,14 +37,9 @@
     "description": "Capteur 16000 DPI, sans fil.",
     "category": "Informatique",
     "price": 39.9,
-    "stock": 31,
+    "stock": 32,
     "icon": "🖱️",
-    "order": {
-      "status": "preparation",
-      "previousStatus": null,
-      "createdAt": "2026-07-04T08:55:02.149Z",
-      "updatedAt": "2026-07-04T08:55:02.149Z"
-    }
+    "order": null
   },
   "PRD-004": {
     "id": "PRD-004",
@@ -63,10 +60,11 @@
     "stock": 7,
     "icon": "🖥️",
     "order": {
+      "id": "ORD-MR6MFYZKAL3J",
       "status": "preparation",
       "previousStatus": null,
-      "createdAt": "2026-07-04T08:54:43.945Z",
-      "updatedAt": "2026-07-04T08:54:43.945Z"
+      "createdAt": "2026-07-04T17:13:46.976Z",
+      "updatedAt": "2026-07-04T17:13:46.976Z"
     }
   },
   "PRD-006": {
@@ -75,9 +73,15 @@
     "description": "1080p 60fps, micro integre.",
     "category": "Informatique",
     "price": 45,
-    "stock": 21,
+    "stock": 20,
     "icon": "📷",
-    "order": null
+    "order": {
+      "id": "ORD-MR6MEFMT3ZIB",
+      "status": "preparation",
+      "previousStatus": null,
+      "createdAt": "2026-07-04T17:12:35.237Z",
+      "updatedAt": "2026-07-04T17:12:35.237Z"
+    }
   },
   "PRD-007": {
     "id": "PRD-007",
