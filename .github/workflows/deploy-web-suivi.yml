@@ -93,5 +93,6 @@ jobs:
             --region "${{ inputs.aws_region }}" \
             --query "Stacks[0].Outputs[?OutputKey=='WebSuiviUrl'].OutputValue" \
             --output text)
+          echo "web_suivi deploye : $URL"
           echo "### web_suivi deploye" >> "$GITHUB_STEP_SUMMARY"
           echo "$URL" >> "$GITHUB_STEP_SUMMARY"
