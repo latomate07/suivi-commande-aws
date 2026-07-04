@@ -1,0 +1,23 @@
+{
+  "name": "@suivi-commande/web-common",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "jest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/react": "^18.0.0",
+    "jest": "^29.5.0",
+    "react": "^18.0.0",
+    "ts-jest": "^29.0.0",
+    "typescript": "^5.6.3"
+  }
+}

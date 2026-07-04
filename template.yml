@@ -22,6 +22,8 @@ Globals:
         ENVIRONMENT_NAME: !Ref EnvironmentName
 
 Resources:
+
+  # ── REST API ──────────────────────────────────────────────────────
   OrdersApi:
     Type: AWS::Serverless::Api
     Properties:
@@ -52,11 +54,344 @@ Resources:
             Path: /orders
             Method: get
 
+  # ── DynamoDB : commandes ──────────────────────────────────────────
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-${EnvironmentName}-orders"
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: orderId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: orderId
+          KeyType: HASH
+
+  # ── EventBridge ───────────────────────────────────────────────────
+  OrderEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvironmentName}-order-events"
+
+  # ── SQS + DLQ ─────────────────────────────────────────────────────
+  OrderEventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${ProjectName}-${EnvironmentName}-order-events-dlq"
+      MessageRetentionPeriod: 1209600
+
+  OrderEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${ProjectName}-${EnvironmentName}-order-events"
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt OrderEventsDLQ.Arn
+        maxReceiveCount: 3
+
+  OrderEventsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref OrderEventsQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt OrderEventsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt OrderEventToSQSRule.Arn
+
+  OrderEventToSQSRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref OrderEventBus
+      EventPattern:
+        source:
+          - !Sub "${ProjectName}.orders"
+        detail-type:
+          - OrderCreated
+          - OrderStatusChanged
+      State: ENABLED
+      Targets:
+        - Id: OrderEventsQueueTarget
+          Arn: !GetAtt OrderEventsQueue.Arn
+
+  # ── Lambda : DDB Streams → EventBridge ───────────────────────────
+  OrderEventFormatterFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/orderEventFormatter.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/orderEventFormatter.handler
+      Description: Formate les events DDB Streams et les publie sur EventBridge.
+      Environment:
+        Variables:
+          EVENT_BUS_NAME: !Ref OrderEventBus
+          EVENT_SOURCE: !Sub "${ProjectName}.orders"
+      Policies:
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref OrderEventBus
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt OrderEventsDLQ.QueueName
+      Events:
+        OrdersStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt OrdersTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 10
+            BisectBatchOnFunctionError: true
+            DestinationConfig:
+              OnFailure:
+                Type: SQS
+                Destination: !GetAtt OrderEventsDLQ.Arn
+
+  # ── DynamoDB : connexions WebSocket ──────────────────────────────
+  WebSocketConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-${EnvironmentName}-ws-connections"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+        - AttributeName: orderId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: orderId-index
+          KeySchema:
+            - AttributeName: orderId
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ── API Gateway WebSocket ─────────────────────────────────────────
+  OrdersWebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvironmentName}-ws"
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  OrdersWebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref OrdersWebSocketApi
+      StageName: !Ref EnvironmentName
+      AutoDeploy: true
+
+  # ── Lambda : $connect ─────────────────────────────────────────────
+  OnConnectFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/wsOnConnect.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/wsOnConnect.handler
+      Description: Enregistre la connexion WebSocket dans DynamoDB.
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref WebSocketConnectionsTable
+          CONNECTION_TTL_SECONDS: "7200"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt WebSocketConnectionsTable.Arn
+
+  OnConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OrdersWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnConnectFunction.Arn}/invocations"
+
+  OnConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersWebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${OnConnectIntegration}"
+
+  OnConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OnConnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${OrdersWebSocketApi}/*"
+
+  # ── Lambda : $disconnect ──────────────────────────────────────────
+  OnDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/wsOnDisconnect.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/wsOnDisconnect.handler
+      Description: Supprime la connexion WebSocket de DynamoDB.
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref WebSocketConnectionsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:DeleteItem
+              Resource: !GetAtt WebSocketConnectionsTable.Arn
+
+  OnDisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OrdersWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnDisconnectFunction.Arn}/invocations"
+
+  OnDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersWebSocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${OnDisconnectIntegration}"
+
+  OnDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OnDisconnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${OrdersWebSocketApi}/*"
+
+  # ── Lambda : $default (heartbeat ping) ───────────────────────────
+  OnDefaultFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/wsOnDefault.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/wsOnDefault.handler
+      Description: Repond aux messages entrants du client (heartbeat ping).
+
+  OnDefaultIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OrdersWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnDefaultFunction.Arn}/invocations"
+
+  OnDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrdersWebSocketApi
+      RouteKey: $default
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${OnDefaultIntegration}"
+
+  OnDefaultPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref OnDefaultFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${OrdersWebSocketApi}/*"
+
+  # ── Lambda : PushNotifier (SQS → WebSocket) ──────────────────────
+  PushNotifierFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/wsPushNotifier.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: backend
+      Handler: src/handlers/wsPushNotifier.handler
+      Description: Consomme la SQS et pousse les evenements aux clients WebSocket connectes.
+      Environment:
+        Variables:
+          CONNECTIONS_TABLE: !Ref WebSocketConnectionsTable
+          WEBSOCKET_ENDPOINT: !Sub "https://${OrdersWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}"
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:DeleteItem
+              Resource:
+                - !GetAtt WebSocketConnectionsTable.Arn
+                - !Sub "${WebSocketConnectionsTable.Arn}/index/orderId-index"
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${OrdersWebSocketApi}/${EnvironmentName}/POST/@connections/*"
+      Events:
+        OrderEventsQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt OrderEventsQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
 Outputs:
   ProjectName:
     Value: !Ref ProjectName
   EnvironmentName:
     Value: !Ref EnvironmentName
   OrdersApiUrl:
-    Description: URL de test exposee par API Gateway
+    Description: URL de l'API REST
     Value: !Sub "https://${OrdersApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}/orders"
+  WebSocketUrl:
+    Description: URL WebSocket a configurer en VITE_WS_URL / REACT_APP_WS_URL cote front
+    Value: !Sub "wss://${OrdersWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}"
+  WebSocketApiId:
+    Description: ID de l'API WebSocket (reference pour IAM et debug)
+    Value: !Ref OrdersWebSocketApi

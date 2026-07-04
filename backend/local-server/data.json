@@ -1,0 +1,102 @@
+{
+  "PRD-001": {
+    "id": "PRD-001",
+    "name": "Casque audio sans fil",
+    "description": "Reduction de bruit active, autonomie 30h.",
+    "category": "Audio",
+    "price": 79.9,
+    "stock": 23,
+    "icon": "🎧",
+    "order": {
+      "status": "expedie",
+      "previousStatus": "preparation",
+      "createdAt": "2026-07-04T08:54:01.385Z",
+      "updatedAt": "2026-07-04T08:56:06.241Z"
+    }
+  },
+  "PRD-002": {
+    "id": "PRD-002",
+    "name": "Clavier mecanique compact",
+    "description": "Switches rouges, retroeclairage RGB.",
+    "category": "Informatique",
+    "price": 64.5,
+    "stock": 14,
+    "icon": "⌨️",
+    "order": {
+      "status": "preparation",
+      "previousStatus": null,
+      "createdAt": "2026-07-04T08:54:26.916Z",
+      "updatedAt": "2026-07-04T08:54:26.916Z"
+    }
+  },
+  "PRD-003": {
+    "id": "PRD-003",
+    "name": "Souris ergonomique",
+    "description": "Capteur 16000 DPI, sans fil.",
+    "category": "Informatique",
+    "price": 39.9,
+    "stock": 31,
+    "icon": "🖱️",
+    "order": {
+      "status": "preparation",
+      "previousStatus": null,
+      "createdAt": "2026-07-04T08:55:02.149Z",
+      "updatedAt": "2026-07-04T08:55:02.149Z"
+    }
+  },
+  "PRD-004": {
+    "id": "PRD-004",
+    "name": "Enceinte bluetooth portable",
+    "description": "Etanche IPX7, 12h d'autonomie.",
+    "category": "Audio",
+    "price": 49,
+    "stock": 18,
+    "icon": "🔊",
+    "order": null
+  },
+  "PRD-005": {
+    "id": "PRD-005",
+    "name": "Ecran 27 pouces 4K",
+    "description": "Dalle IPS, 99% sRGB.",
+    "category": "Informatique",
+    "price": 289,
+    "stock": 7,
+    "icon": "🖥️",
+    "order": {
+      "status": "preparation",
+      "previousStatus": null,
+      "createdAt": "2026-07-04T08:54:43.945Z",
+      "updatedAt": "2026-07-04T08:54:43.945Z"
+    }
+  },
+  "PRD-006": {
+    "id": "PRD-006",
+    "name": "Webcam full HD",
+    "description": "1080p 60fps, micro integre.",
+    "category": "Informatique",
+    "price": 45,
+    "stock": 21,
+    "icon": "📷",
+    "order": null
+  },
+  "PRD-007": {
+    "id": "PRD-007",
+    "name": "Chargeur rapide USB-C 65W",
+    "description": "Charge deux appareils simultanement.",
+    "category": "Accessoires",
+    "price": 29.9,
+    "stock": 40,
+    "icon": "🔌",
+    "order": null
+  },
+  "PRD-008": {
+    "id": "PRD-008",
+    "name": "Sac a dos pour ordinateur",
+    "description": "Compartiment rembourre 15 pouces.",
+    "category": "Accessoires",
+    "price": 54,
+    "stock": 12,
+    "icon": "🎒",
+    "order": null
+  }
+}
