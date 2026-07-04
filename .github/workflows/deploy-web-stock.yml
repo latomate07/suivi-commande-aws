@@ -1,0 +1,105 @@
+name: Deploy web-stock
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack_name:
+        description: Nom du stack SAM (pour recuperer les outputs CloudFormation)
+        required: true
+        default: suivi-commande
+      aws_region:
+        description: AWS region
+        required: true
+        default: eu-west-1
+      environment_name:
+        description: Environnement (dev, staging, prod…)
+        required: true
+        default: dev
+
+jobs:
+  deploy:
+    name: Build & deploy web_stock → S3 + CloudFront
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_name }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web_stock/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Get CloudFormation outputs
+        id: cfn
+        run: |
+          OUTPUTS=$(aws cloudformation describe-stacks \
+            --stack-name "${{ inputs.stack_name }}" \
+            --region "${{ inputs.aws_region }}" \
+            --query "Stacks[0].Outputs" \
+            --output json)
+
+          get() { echo "$OUTPUTS" | jq -r ".[] | select(.OutputKey==\"$1\") | .OutputValue"; }
+
+          echo "ws_url=$(get WebSocketUrl)"           >> "$GITHUB_OUTPUT"
+          echo "api_url=$(get PublicApiUrl)"           >> "$GITHUB_OUTPUT"
+          echo "admin_api_url=$(get AdminApiUrl)"      >> "$GITHUB_OUTPUT"
+          echo "user_pool_id=$(get AdminUserPoolId)"   >> "$GITHUB_OUTPUT"
+          echo "client_id=$(get AdminUserPoolClientId)" >> "$GITHUB_OUTPUT"
+          echo "bucket=$(get WebStockBucketName)"      >> "$GITHUB_OUTPUT"
+          echo "cf_id=$(get WebStockDistributionId)"   >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web_stock
+
+      - name: Build
+        run: npm run build
+        working-directory: web_stock
+        env:
+          VITE_WS_URL: ${{ steps.cfn.outputs.ws_url }}
+          VITE_API_URL: ${{ steps.cfn.outputs.api_url }}
+          VITE_ADMIN_API_URL: ${{ steps.cfn.outputs.admin_api_url }}
+          VITE_COGNITO_USER_POOL_ID: ${{ steps.cfn.outputs.user_pool_id }}
+          VITE_COGNITO_CLIENT_ID: ${{ steps.cfn.outputs.client_id }}
+
+      - name: Sync assets to S3 (cache long terme)
+        run: |
+          aws s3 sync web_stock/dist/ "s3://${{ steps.cfn.outputs.bucket }}" \
+            --delete \
+            --exclude "index.html" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Upload index.html (no-cache)
+        run: |
+          aws s3 cp web_stock/dist/index.html \
+            "s3://${{ steps.cfn.outputs.bucket }}/index.html" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalider le cache CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.cfn.outputs.cf_id }}" \
+            --paths "/*"
+
+      - name: URL de deploiement
+        run: |
+          URL=$(aws cloudformation describe-stacks \
+            --stack-name "${{ inputs.stack_name }}" \
+            --region "${{ inputs.aws_region }}" \
+            --query "Stacks[0].Outputs[?OutputKey=='WebStockUrl'].OutputValue" \
+            --output text)
+          echo "### web_stock deploye" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
