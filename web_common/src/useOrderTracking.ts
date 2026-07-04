@@ -1,43 +1,53 @@
-import { useEffect, useRef, useState } from 'react';
-import { OrderWebSocketClient, OrderWebSocketClientConfig } from './OrderWebSocketClient';
-import { ConnectionState, OrderEvent, OrderStatus } from './types';
+import { useState, useEffect, useRef } from 'react';
+import { Order, OrderStatus } from './types';
+import { pollOrder, POLL_INTERVAL_MS } from './pollOrder';
+
+export interface UseOrderTrackingOptions {
+    /** Intervalle de polling en ms (défaut : POLL_INTERVAL_MS = 5 s) */
+    interval?: number;
+}
 
 export interface UseOrderTrackingResult {
-    connectionState: ConnectionState;
-    lastEvent: OrderEvent | null;
+    order: Order | null;
     status: OrderStatus | null;
+    loading: boolean;
+    error: string | null;
 }
 
 export function useOrderTracking(
     orderId: string | null,
-    wsUrl: string,
-    options?: Pick<OrderWebSocketClientConfig, 'maxRetries' | 'maxDelay' | 'heartbeatInterval'>,
+    apiUrl: string,
+    options?: UseOrderTrackingOptions,
 ): UseOrderTrackingResult {
-    const [connectionState, setConnectionState] = useState<ConnectionState>('closed');
-    const [lastEvent, setLastEvent] = useState<OrderEvent | null>(null);
-    const [status, setStatus] = useState<OrderStatus | null>(null);
-    // Keep options in a ref so changes don't re-trigger the effect (no reconnect on option change)
+    const [order, setOrder] = useState<Order | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const optionsRef = useRef(options);
     optionsRef.current = options;
 
     useEffect(() => {
-        if (!orderId) return;
+        if (!orderId) {
+            setOrder(null);
+            setError(null);
+            return;
+        }
 
-        const client = new OrderWebSocketClient({ wsUrl, ...optionsRef.current });
-        const unsubState = client.onStateChange(setConnectionState);
-        const unsubMsg = client.onMessage((evt) => {
-            setLastEvent(evt);
-            setStatus(evt.status);
+        setLoading(true);
+
+        const stop = pollOrder(orderId, apiUrl, (data) => {
+            setOrder(data);
+            setError(null);
+            setLoading(false);
+        }, {
+            interval: optionsRef.current?.interval ?? POLL_INTERVAL_MS,
+            onError: (err) => {
+                setError(err.message);
+                setLoading(false);
+            },
         });
 
-        client.connect(orderId);
+        return stop;
+    }, [orderId, apiUrl]);
 
-        return () => {
-            unsubState();
-            unsubMsg();
-            client.disconnect();
-        };
-    }, [orderId, wsUrl]);
-
-    return { connectionState, lastEvent, status };
+    return { order, status: order?.status ?? null, loading, error };
 }

@@ -1,6 +1,6 @@
 # @suivi-commande/web-common
 
-Librairie front partagée pour la connexion WebSocket temps réel au service de suivi de commande.
+Librairie front partagée pour le suivi de commande en temps réel par polling.
 
 ## Installation
 
@@ -14,40 +14,29 @@ Dans `web_suivi/package.json` ou `web_stock/package.json` :
 }
 ```
 
-Puis build la librairie une première fois :
+Build la librairie une première fois :
 
 ```bash
-cd web_common
-npm install
-npm run build
-```
-
-Et dans l'app front :
-
-```bash
-cd web_suivi   # ou web_stock
-npm install
+cd web_common && npm install && npm run build
+cd ../web_suivi && npm install   # ou web_stock
 ```
 
 ## Variable d'environnement requise
 
-L'URL WebSocket est produite par le stack SAM (output `WebSocketUrl`).  
-Récupère-la après déploiement :
+L'URL de l'API publique est disponible dans l'output SAM `PublicApiUrl` :
 
 ```bash
 aws cloudformation describe-stacks \
   --stack-name suivi-commande \
-  --query "Stacks[0].Outputs[?OutputKey=='WebSocketUrl'].OutputValue" \
+  --query "Stacks[0].Outputs[?OutputKey=='PublicApiUrl'].OutputValue" \
   --output text
 ```
 
-Configure-la dans ton framework :
-
 | Framework | Variable | Fichier |
 |-----------|----------|---------|
-| Vite      | `VITE_WS_URL` | `.env` |
-| CRA       | `REACT_APP_WS_URL` | `.env` |
-| Next.js   | `NEXT_PUBLIC_WS_URL` | `.env.local` |
+| Vite      | `VITE_API_URL` | `.env` |
+| CRA       | `REACT_APP_API_URL` | `.env` |
+| Next.js   | `NEXT_PUBLIC_API_URL` | `.env.local` |
 
 ## Hook React — `useOrderTracking`
 
@@ -55,20 +44,14 @@ Configure-la dans ton framework :
 import { useOrderTracking } from '@suivi-commande/web-common';
 
 function OrderStatus({ orderId }: { orderId: string }) {
-  const wsUrl = import.meta.env.VITE_WS_URL; // ou process.env.REACT_APP_WS_URL
+  const apiUrl = import.meta.env.VITE_API_URL;
 
-  const { connectionState, status, lastEvent } = useOrderTracking(orderId, wsUrl);
+  const { status, order, loading, error } = useOrderTracking(orderId, apiUrl);
 
-  if (connectionState === 'connecting' || connectionState === 'reconnecting') {
-    return <p>Connexion en cours…</p>;
-  }
+  if (loading) return <p>Chargement…</p>;
+  if (error)   return <p>Erreur : {error}</p>;
 
-  return (
-    <div>
-      <p>Statut : {status ?? 'inconnu'}</p>
-      <p>Connexion : {connectionState}</p>
-    </div>
-  );
+  return <p>Statut : {status}</p>;
 }
 ```
 
@@ -76,93 +59,61 @@ function OrderStatus({ orderId }: { orderId: string }) {
 
 | Champ | Type | Description |
 |-------|------|-------------|
-| `connectionState` | `'connecting' \| 'open' \| 'reconnecting' \| 'closed'` | État de la connexion WebSocket |
-| `status` | `OrderStatus \| null` | Dernier statut reçu |
-| `lastEvent` | `OrderEvent \| null` | Dernier événement complet |
+| `order` | `Order \| null` | Dernier objet commande reçu |
+| `status` | `OrderStatus \| null` | Champ `status` de la commande |
+| `loading` | `boolean` | `true` avant la première réponse |
+| `error` | `string \| null` | Message d'erreur en cas d'échec |
 
 ### Options
 
 ```tsx
-useOrderTracking(orderId, wsUrl, {
-  maxRetries: 10,        // tentatives de reconnexion (défaut : 10)
-  maxDelay: 30_000,      // délai max entre tentatives en ms (défaut : 30 000)
-  heartbeatInterval: 540_000, // fréquence du ping en ms (défaut : 9 min)
+useOrderTracking(orderId, apiUrl, {
+  interval: 3_000,   // intervalle de polling en ms (défaut : POLL_INTERVAL_MS = 5 000)
 });
 ```
 
-## Client bas niveau — `OrderWebSocketClient`
+## Fonction bas niveau — `pollOrder`
+
+Pour les cas hors React :
 
 ```ts
-import { OrderWebSocketClient } from '@suivi-commande/web-common';
+import { pollOrder } from '@suivi-commande/web-common';
 
-const client = new OrderWebSocketClient({ wsUrl: 'wss://...' });
-
-const unsubMsg = client.onMessage((event) => {
-  console.log(event.type, event.status);
-});
-
-const unsubState = client.onStateChange((state) => {
-  console.log('WebSocket state:', state);
-});
-
-client.connect('PRD-001');
+const stop = pollOrder(
+  'CMD-001',
+  'https://api.example.com/dev',
+  (order) => console.log('Mise à jour :', order.status),
+  {
+    interval: 5_000,
+    onError: (err) => console.error(err),
+  },
+);
 
 // Plus tard :
-unsubMsg();
-unsubState();
-client.disconnect();
+stop();
 ```
 
-## Contrat des messages (format des événements)
+## Changer l'intervalle par défaut globalement
 
-Tous les messages reçus par le client WebSocket sont des objets JSON typés :
+Dans `web_common/src/pollOrder.ts`, modifier la constante :
 
-### `OrderCreated`
+```ts
+export const POLL_INTERVAL_MS = 5_000; // ← changer cette valeur
+```
 
-```json
-{
-  "type": "OrderCreated",
-  "orderId": "PRD-001",
-  "status": "preparation",
-  "previousStatus": null,
-  "createdAt": "2026-01-01T00:00:00.000Z",
-  "updatedAt": "2026-01-01T00:00:00.000Z"
+## Format de la commande
+
+```ts
+interface Order {
+  orderId: string;
+  status: 'preparation' | 'expedie' | 'livre' | 'annule';
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
 }
 ```
-
-### `OrderStatusChanged`
-
-```json
-{
-  "type": "OrderStatusChanged",
-  "orderId": "PRD-001",
-  "status": "expedie",
-  "previousStatus": "preparation",
-  "createdAt": "2026-01-01T00:00:00.000Z",
-  "updatedAt": "2026-01-01T01:00:00.000Z"
-}
-```
-
-### Valeurs de `status`
-
-`preparation` | `expedie` | `livre` | `annule`
-
-## Reconnexion automatique
-
-- Backoff exponentiel : 1s → 2s → 4s → … (plafonné à `maxDelay`)
-- Jitter aléatoire de 0–1 s ajouté à chaque délai
-- Arrêt définitif après `maxRetries` tentatives (état `closed`)
-- Heartbeat JSON `{"action":"ping"}` envoyé toutes les 9 min pour éviter le timeout idle de 10 min d'API Gateway
 
 ## Tests
 
 ```bash
-cd web_common
-npm install
-npm test
+cd web_common && npm install && npm test
 ```
-
-Les tests couvrent :
-- `parseMessage` : parsing et validation des events
-- `computeBackoff` : logique de backoff exponentiel + jitter
-- `OrderWebSocketClient` : connexion, reconnexion, arrêt, émission d'événements (WebSocket mocké)

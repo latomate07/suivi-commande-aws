@@ -1,11 +1,5 @@
-export type {
-    OrderStatus,
-    ConnectionState,
-    OrderEvent,
-    OrderCreatedEvent,
-    OrderStatusChangedEvent,
-} from './types';
-export { OrderWebSocketClient } from './OrderWebSocketClient';
-export type { OrderWebSocketClientConfig } from './OrderWebSocketClient';
+export type { OrderStatus, Order } from './types';
+export { pollOrder, POLL_INTERVAL_MS } from './pollOrder';
+export type { PollOrderOptions } from './pollOrder';
 export { useOrderTracking } from './useOrderTracking';
-export type { UseOrderTrackingResult } from './useOrderTracking';
+export type { UseOrderTrackingOptions, UseOrderTrackingResult } from './useOrderTracking';

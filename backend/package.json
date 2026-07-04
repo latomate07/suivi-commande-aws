@@ -8,11 +8,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-apigatewaymanagementapi": "^3.0.0",
     "@aws-sdk/client-dynamodb": "^3.0.0",
-    "@aws-sdk/client-eventbridge": "^3.0.0",
     "@aws-sdk/lib-dynamodb": "^3.0.0",
-    "@aws-sdk/util-dynamodb": "^3.0.0",
     "esbuild": "^0.28.1"
   },
   "devDependencies": {

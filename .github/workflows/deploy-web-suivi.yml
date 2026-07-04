@@ -53,7 +53,6 @@ jobs:
 
           get() { echo "$OUTPUTS" | jq -r ".[] | select(.OutputKey==\"$1\") | .OutputValue"; }
 
-          echo "ws_url=$(get WebSocketUrl)"          >> "$GITHUB_OUTPUT"
           echo "api_url=$(get PublicApiUrl)"          >> "$GITHUB_OUTPUT"
           echo "bucket=$(get WebSuiviBucketName)"     >> "$GITHUB_OUTPUT"
           echo "cf_id=$(get WebSuiviDistributionId)"  >> "$GITHUB_OUTPUT"
@@ -66,7 +65,6 @@ jobs:
         run: npm run build
         working-directory: web_suivi
         env:
-          VITE_WS_URL: ${{ steps.cfn.outputs.ws_url }}
           VITE_API_URL: ${{ steps.cfn.outputs.api_url }}
 
       - name: Sync assets to S3 (cache long terme)
