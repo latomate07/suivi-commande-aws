@@ -4,32 +4,7 @@ Application serverless de suivi de commandes en temps réel, déployée sur AWS 
 
 ## Architecture
 
-```
-web_suivi (S3 + CloudFront)          web_stock (S3 + CloudFront)
-        │                                      │
-        │ GET /track/{orderId}                 │ GET  /list/orders
-        │ POST /create/{orderId}               │ GET  /list/products
-        ▼                                      │ PUT  /update/{orderId}
-  API publique (REST)              API admin (REST + Cognito)
-        │                                      │
-        └──────────────┬───────────────────────┘
-                       ▼
-              Lambda handlers
-                       │
-              DynamoDB (OrdersTable)
-                       │  DDB Streams
-                       ▼
-              Lambda (OrderEventFormatter)
-                       │
-              EventBridge (custom bus)
-                       │
-              SQS (OrderEventsQueue)
-                       │
-              Lambda (PushNotifier)
-                       │
-        API Gateway WebSocket ◄──── web_suivi / web_stock
-        (WebSocketConnectionsTable)
-```
+![Architecture](art/architecture.png)
 
 ## Structure
 
