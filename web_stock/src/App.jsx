@@ -1,35 +1,62 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import ProductsPage from "./ProductsPage.jsx";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import LoginPage from "./LoginPage.jsx";
+import { readSession, clearSession, getIdToken } from "./auth.js";
 
-const API_BASE_URL = "";
-const STORAGE_KEY = "delivery-admin-orders";
+// URL de base de l'API admin protégée par Cognito (injectée au build, voir .env.example).
+const ADMIN_API_URL = (import.meta.env.VITE_ADMIN_API_URL || "").replace(/\/$/, "");
 const PAGE_SIZE = 10;
-const statusFlow = ["preparation", "expedie", "en_livraison", "livree"];
+// Statuts alignés sur le backend (updateOrder.ts) : preparation, expedie, livre, annule.
+const statusFlow = ["preparation", "expedie", "livre"];
 const statusLabels = {
   preparation: "Préparation",
   expedie: "Expédiée",
-  en_livraison: "En livraison",
-  livree: "Livrée",
-  incident: "Incident"
+  livre: "Livrée",
+  annule: "Annulée"
 };
 const statusDescriptions = {
   preparation: "Commande validée et colis en préparation.",
   expedie: "Colis transmis au transporteur.",
-  en_livraison: "Livreur en route vers le destinataire.",
-  livree: "Colis remis au destinataire.",
-  incident: "Traitement manuel requis."
+  livre: "Colis remis au destinataire.",
+  annule: "Commande annulée."
 };
-const seedOrders = createSeedOrders();
 
 export default function App() {
   const route = useHashRoute();
-  const [orders, setOrders] = useState(loadOrders);
+  const [session, setSession] = useState(readSession);
+  const [orders, setOrders] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
 
+  const handleLogout = useCallback(() => {
+    clearSession();
+    setSession(null);
+    setOrders({});
+  }, []);
+
+  const reloadOrders = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const items = await fetchOrders();
+      setOrders(indexOrders(items));
+    } catch (error) {
+      if (error.status === 401) {
+        handleLogout();
+        return;
+      }
+      setLoadError(error.message || "Impossible de charger les commandes.");
+    } finally {
+      setLoading(false);
+    }
+  }, [handleLogout]);
+
   useEffect(() => {
-    saveOrders(orders);
-  }, [orders]);
+    if (session) {
+      reloadOrders();
+    }
+  }, [session, reloadOrders]);
 
   function showToast(title, message) {
     window.clearTimeout(toastTimer.current);
@@ -37,15 +64,19 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 3300);
   }
 
+  if (!session) {
+    return <LoginPage onSuccess={setSession} />;
+  }
+
+  const pageProps = { orders, loading, loadError, reloadOrders, session, onLogout: handleLogout };
+
   return (
     <>
-      {route.page === "products" ? (
-        <ProductsPage />
-      ) : route.page === "orders" ? (
-        <OrdersPage orders={orders} />
+      {route.page === "orders" ? (
+        <OrdersPage {...pageProps} />
       ) : (
         <AdminPage
-          orders={orders}
+          {...pageProps}
           routeOrderNumber={route.query.get("order")}
           setOrders={setOrders}
           showToast={showToast}
@@ -56,38 +87,43 @@ export default function App() {
   );
 }
 
-function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
-  const initialOrderNumber = getDefaultOrderNumber(orders, routeOrderNumber);
-  const [orderInput, setOrderInput] = useState(initialOrderNumber);
-  const [currentOrderNumber, setCurrentOrderNumber] = useState(initialOrderNumber);
-  const currentOrder = orders[currentOrderNumber] || orders[getDefaultOrderNumber(orders)];
-  const [selectedStatus, setSelectedStatus] = useState(currentOrder.status || "preparation");
-  const [note, setNote] = useState(currentOrder.note || "");
-  const [lastEvent, setLastEvent] = useState(() => buildEvent(currentOrder));
+function AdminPage({ orders, loading, loadError, reloadOrders, routeOrderNumber, setOrders, showToast, session, onLogout }) {
+  const [currentOrderNumber, setCurrentOrderNumber] = useState(() => normalizeOrderNumber(routeOrderNumber || ""));
+  const [orderInput, setOrderInput] = useState(currentOrderNumber);
+  const [selectedStatus, setSelectedStatus] = useState("preparation");
+  const [note, setNote] = useState("");
+  const [lastEvent, setLastEvent] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    const requestedOrder = normalizeOrderNumber(routeOrderNumber || "");
-    if (!requestedOrder) {
-      return;
-    }
-    if (!orders[requestedOrder]) {
-      showToast("Commande introuvable", `${requestedOrder} n'existe pas dans la liste.`);
-      return;
-    }
-    setCurrentOrderNumber(requestedOrder);
-    setOrderInput(requestedOrder);
-    setSelectedStatus(orders[requestedOrder].status || "preparation");
-    setNote(orders[requestedOrder].note || "");
-    setLastEvent(buildEvent(orders[requestedOrder], "ORDER_SELECTED"));
-  }, [routeOrderNumber]);
+  const currentOrder = currentOrderNumber ? orders[currentOrderNumber] : null;
 
+  function applySelection(order, eventType = "ORDER_SELECTED", previousStatus = null) {
+    setCurrentOrderNumber(order.orderNumber);
+    setOrderInput(order.orderNumber);
+    setSelectedStatus(order.status || "preparation");
+    setNote(order.note || "");
+    setLastEvent(buildEvent(order, eventType, previousStatus));
+  }
+
+  // Résout la commande à afficher quand les données arrivent ou que la route change.
   useEffect(() => {
-    if (!currentOrder) {
+    const requested = normalizeOrderNumber(routeOrderNumber || "");
+    if (requested) {
+      if (orders[requested]) {
+        applySelection(orders[requested]);
+      } else if (!loading && Object.keys(orders).length) {
+        showToast("Commande introuvable", `${requested} n'existe pas dans la liste.`);
+      }
       return;
     }
-    setSelectedStatus(currentOrder.status || "preparation");
-    setNote(currentOrder.note || "");
-  }, [currentOrderNumber]);
+    if ((!currentOrderNumber || !orders[currentOrderNumber]) && Object.keys(orders).length) {
+      const fallback = getDefaultOrderNumber(orders);
+      if (fallback) {
+        applySelection(orders[fallback]);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, routeOrderNumber, loading]);
 
   function handleSearch() {
     const orderNumber = normalizeOrderNumber(orderInput);
@@ -98,11 +134,7 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
       showToast("Commande introuvable", `${orderNumber} n'existe pas dans la liste.`);
       return;
     }
-    setCurrentOrderNumber(orderNumber);
-    setOrderInput(orderNumber);
-    setSelectedStatus(orders[orderNumber].status || "preparation");
-    setNote(orders[orderNumber].note || "");
-    setLastEvent(buildEvent(orders[orderNumber], "ORDER_SELECTED"));
+    applySelection(orders[orderNumber]);
     showToast("Commande chargée", `${orderNumber} est prête à être modifiée.`);
   }
 
@@ -116,46 +148,39 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
     }
 
     const previousStatus = existingOrder.status || "preparation";
-    const payload = {
-      orderNumber,
-      previousStatus,
-      status: selectedStatus,
-      note: note.trim(),
-      source: "admin-ui",
-      updatedAt: new Date().toISOString()
-    };
-
+    setSaving(true);
     try {
-      const savedOrder = await persistStatus(payload, orders);
+      const attributes = await updateOrderStatus(existingOrder.orderId, selectedStatus);
+      const savedOrder = mergeOrder(existingOrder, attributes, selectedStatus, note.trim(), previousStatus);
       setOrders((currentOrders) => ({
         ...currentOrders,
         [savedOrder.orderNumber]: savedOrder
       }));
-      setCurrentOrderNumber(savedOrder.orderNumber);
-      setOrderInput(savedOrder.orderNumber);
-      setLastEvent(buildEvent(savedOrder, "ORDER_STATUS_UPDATED", previousStatus));
+      applySelection(savedOrder, "ORDER_STATUS_UPDATED", previousStatus);
       showToast(
         "Statut mis à jour",
         `${savedOrder.orderNumber} est maintenant ${statusLabels[savedOrder.status].toLowerCase()}.`
       );
     } catch (error) {
+      if (error.status === 401) {
+        onLogout();
+        return;
+      }
       showToast("Mise à jour refusée", error.message || "Le service n'a pas répondu.");
+    } finally {
+      setSaving(false);
     }
   }
 
-  function resetDemo() {
-    const nextOrders = createSeedOrders();
-    const nextOrder = nextOrders["CMD-1001"];
-    setOrders(nextOrders);
-    setCurrentOrderNumber(nextOrder.orderNumber);
-    setOrderInput(nextOrder.orderNumber);
-    setSelectedStatus(nextOrder.status);
-    setNote(nextOrder.note);
-    setLastEvent(buildEvent(nextOrder, "ORDER_SELECTED"));
-    showToast("Données réinitialisées", "Les commandes de démonstration sont restaurées.");
+  function handleRefresh() {
+    reloadOrders();
+    showToast("Actualisation", "Rechargement des commandes depuis l'API.");
   }
 
   async function copyEvent() {
+    if (!lastEvent) {
+      return;
+    }
     try {
       await navigator.clipboard.writeText(JSON.stringify(lastEvent, null, 2));
       showToast("Événement copié", "Le message JSON est dans le presse-papiers.");
@@ -172,18 +197,15 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
         icon="truck"
         actions={
           <>
-            <a className="secondary-button" href="#/products">
-              <Icon name="package" />
-              Produits
-            </a>
             <a className="secondary-button" href="#/orders">
               <Icon name="list" />
               Liste des commandes
             </a>
             <div className="status-pill">
               <span className="status-dot" aria-hidden="true" />
-              <span>{API_BASE_URL ? "Connecté à API Gateway" : "Mode démo local"}</span>
+              <span>{ADMIN_API_URL ? "Connecté à API Gateway" : "API non configurée"}</span>
             </div>
+            <UserMenu session={session} onLogout={onLogout} />
           </>
         }
       />
@@ -196,14 +218,20 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
               <p>Recherche par numéro puis publication du nouveau statut.</p>
             </div>
             <div className="panel-actions">
-              <button className="secondary-button" type="button" onClick={resetDemo}>
+              <button className="secondary-button" type="button" onClick={handleRefresh} disabled={loading}>
                 <Icon name="refresh" />
-                Réinitialiser
+                {loading ? "Chargement…" : "Actualiser"}
               </button>
             </div>
           </div>
 
           <div className="panel-body">
+            {loadError && (
+              <div className="empty-state" role="alert">
+                Erreur de chargement : {loadError}
+              </div>
+            )}
+
             <form className="form-grid" onSubmit={handleSubmit}>
               <div className="field">
                 <label htmlFor="orderNumber">Numéro de commande</label>
@@ -239,7 +267,7 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
               <div className="field">
                 <span className="group-label">Statut</span>
                 <div className="status-options" role="radiogroup" aria-label="Statut de la commande">
-                  {statusFlow.concat("incident").map((status) => (
+                  {statusFlow.concat("annule").map((status) => (
                     <StatusOption
                       key={status}
                       status={status}
@@ -251,7 +279,7 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
               </div>
 
               <div className="field">
-                <label htmlFor="operatorNote">Note interne</label>
+                <label htmlFor="operatorNote">Note interne (locale)</label>
                 <textarea
                   id="operatorNote"
                   name="operatorNote"
@@ -261,18 +289,18 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
                 />
               </div>
 
-              <button className="primary-button" type="submit">
+              <button className="primary-button" type="submit" disabled={saving || !currentOrder}>
                 <Icon name="save" />
-                Mettre à jour le statut
+                {saving ? "Enregistrement…" : "Mettre à jour le statut"}
               </button>
             </form>
 
             <div className="summary-grid" aria-label="Synthèse">
-              <Metric label="Client" value={formatCustomerName(currentOrder)} />
-              <Metric label="Date de commande" value={formatDateOnly(currentOrder.orderDate)} />
-              <Metric label="Transporteur" value={currentOrder.carrier || "À affecter"} />
-              <Metric label="Destination" value={currentOrder.destination || "Non renseignée"} />
-              <Metric label="Dernière mise à jour" value={formatDate(currentOrder.updatedAt)} />
+              <Metric label="Client" value={currentOrder ? formatCustomerName(currentOrder) : "—"} />
+              <Metric label="Date de commande" value={currentOrder ? formatDateOnly(currentOrder.orderDate) : "—"} />
+              <Metric label="Transporteur" value={currentOrder?.carrier || "—"} />
+              <Metric label="Destination" value={currentOrder?.destination || "—"} />
+              <Metric label="Dernière mise à jour" value={currentOrder ? formatDate(currentOrder.updatedAt) : "—"} />
             </div>
           </div>
         </section>
@@ -286,14 +314,22 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
               </div>
             </div>
             <div className="panel-body">
-              <div className="order-head">
-                <div className="order-number">
-                  <span>Numéro</span>
-                  <strong>{currentOrder.orderNumber}</strong>
+              {currentOrder ? (
+                <>
+                  <div className="order-head">
+                    <div className="order-number">
+                      <span>Numéro</span>
+                      <strong>{currentOrder.orderNumber}</strong>
+                    </div>
+                    <StatusBadge status={currentOrder.status} />
+                  </div>
+                  <Timeline order={currentOrder} />
+                </>
+              ) : (
+                <div className="empty-state">
+                  {loading ? "Chargement des commandes…" : "Aucune commande sélectionnée."}
                 </div>
-                <StatusBadge status={currentOrder.status} />
-              </div>
-              <Timeline order={currentOrder} />
+              )}
             </div>
           </section>
 
@@ -305,16 +341,16 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
               </div>
             </div>
             <div className="panel-body">
-              <pre className="event-preview" aria-label="Événement publié">
-                {JSON.stringify(lastEvent, null, 2)}
-              </pre>
+              {lastEvent ? (
+                <pre className="event-preview" aria-label="Événement publié">
+                  {JSON.stringify(lastEvent, null, 2)}
+                </pre>
+              ) : (
+                <div className="empty-state">Sélectionnez une commande pour prévisualiser l'événement.</div>
+              )}
               <div className="action-row">
-                <span className="muted">
-                  {API_BASE_URL
-                    ? "Événement publié par la Lambda après écriture DynamoDB."
-                    : "Topic SNS / bus EventBridge après déploiement."}
-                </span>
-                <button className="secondary-button" type="button" onClick={copyEvent}>
+                <span className="muted">Statut publié par la Lambda après écriture DynamoDB.</span>
+                <button className="secondary-button" type="button" onClick={copyEvent} disabled={!lastEvent}>
                   <Icon name="copy" />
                   Copier
                 </button>
@@ -327,7 +363,7 @@ function AdminPage({ orders, routeOrderNumber, setOrders, showToast }) {
   );
 }
 
-function OrdersPage({ orders }) {
+function OrdersPage({ orders, loading, loadError, reloadOrders, session, onLogout }) {
   const [currentPage, setCurrentPage] = useState(1);
   const sortedOrders = useMemo(() => Object.values(orders).sort(compareOrders), [orders]);
   const totalPages = Math.max(1, Math.ceil(sortedOrders.length / PAGE_SIZE));
@@ -348,14 +384,15 @@ function OrdersPage({ orders }) {
         icon="list"
         actions={
           <>
-            <a className="secondary-button" href="#/products">
-              <Icon name="package" />
-              Produits
-            </a>
             <a className="secondary-button" href="#/admin">
               <Icon name="back" />
               Administration
             </a>
+            <button className="secondary-button" type="button" onClick={reloadOrders} disabled={loading}>
+              <Icon name="refresh" />
+              {loading ? "Chargement…" : "Actualiser"}
+            </button>
+            <UserMenu session={session} onLogout={onLogout} />
           </>
         }
       />
@@ -370,6 +407,12 @@ function OrdersPage({ orders }) {
           </div>
           <p className="page-indicator">10 par page</p>
         </div>
+
+        {loadError && (
+          <div className="empty-state" role="alert">
+            Erreur de chargement : {loadError}
+          </div>
+        )}
 
         <div className="table-wrap">
           <table>
@@ -391,12 +434,12 @@ function OrdersPage({ orders }) {
                     <OrderLink order={order} />
                   </td>
                   <td>{order.firstName || "Client"}</td>
-                  <td>{order.lastName || "Démonstration"}</td>
+                  <td>{order.lastName || "—"}</td>
                   <td>{formatDateOnly(order.orderDate)}</td>
                   <td>
                     <StatusBadge status={order.status} />
                   </td>
-                  <td>{order.destination || "Non renseignée"}</td>
+                  <td>{order.destination || "—"}</td>
                   <td>
                     <a className="secondary-button compact-button" href={`#/admin?order=${encodeURIComponent(order.orderNumber)}`}>
                       Modifier
@@ -420,7 +463,7 @@ function OrdersPage({ orders }) {
               </div>
               <div className="card-grid">
                 <CardField label="Date de commande" value={formatDateOnly(order.orderDate)} />
-                <CardField label="Destination" value={order.destination || "Non renseignée"} />
+                <CardField label="Destination" value={order.destination || "—"} />
               </div>
               <a className="secondary-button" href={`#/admin?order=${encodeURIComponent(order.orderNumber)}`}>
                 Modifier
@@ -429,7 +472,9 @@ function OrdersPage({ orders }) {
           ))}
         </div>
 
-        {!sortedOrders.length && <div className="empty-state">Aucune commande enregistrée.</div>}
+        {!sortedOrders.length && !loadError && (
+          <div className="empty-state">{loading ? "Chargement des commandes…" : "Aucune commande enregistrée."}</div>
+        )}
 
         <div className="panel-footer">
           <p className="page-indicator">
@@ -458,6 +503,20 @@ function OrdersPage({ orders }) {
         </div>
       </section>
     </main>
+  );
+}
+
+function UserMenu({ session, onLogout }) {
+  return (
+    <div className="user-menu">
+      <span className="user-email" title={session?.email}>
+        {session?.email}
+      </span>
+      <button className="secondary-button compact-button" type="button" onClick={onLogout}>
+        <Icon name="logout" />
+        Déconnexion
+      </button>
+    </div>
   );
 }
 
@@ -498,14 +557,14 @@ function StatusOption({ status, checked, onChange }) {
 
 function Timeline({ order }) {
   const status = order.status || "preparation";
-  const referenceStatus = status === "incident" ? order.previousStatus : status;
+  const referenceStatus = status === "annule" ? order.previousStatus : status;
   const activeIndex = Math.max(statusFlow.indexOf(referenceStatus), 0);
-  const items = status === "incident" ? [...statusFlow.slice(0, activeIndex + 1), "incident"] : statusFlow;
+  const items = status === "annule" ? [...statusFlow.slice(0, activeIndex + 1), "annule"] : statusFlow;
 
   return (
     <ol className="timeline">
       {items.map((key, index) => {
-        const isDone = status === "incident" ? key !== "incident" : index < activeIndex;
+        const isDone = status === "annule" ? key !== "annule" : index < activeIndex;
         const isCurrent = key === status;
         return (
           <li className={`${isDone ? "is-done" : ""} ${isCurrent ? "is-current" : ""}`} key={key}>
@@ -680,6 +739,15 @@ function Icon({ name }) {
       </svg>
     );
   }
+  if (name === "logout") {
+    return (
+      <svg {...common}>
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+        <path d="m16 17 5-5-5-5" />
+        <path d="M21 12H9" />
+      </svg>
+    );
+  }
   return (
     <svg {...common}>
       <path d="m9 18 6-6-6-6" />
@@ -691,9 +759,8 @@ function statusIcon(status) {
   return {
     preparation: "package",
     expedie: "arrow",
-    en_livraison: "delivery",
-    livree: "check",
-    incident: "warning"
+    livre: "check",
+    annule: "warning"
   }[status];
 }
 
@@ -713,148 +780,104 @@ function useHashRoute() {
   const [path, queryString = ""] = normalizedHash.split("?");
 
   return {
-    page: path === "/orders" ? "orders" : path === "/products" ? "products" : "admin",
+    page: path === "/orders" ? "orders" : "admin",
     query: new URLSearchParams(queryString)
   };
 }
 
-async function persistStatus(payload, orders) {
-  if (!API_BASE_URL) {
-    return {
-      ...(orders[payload.orderNumber] || createDraftOrder(payload.orderNumber)),
-      status: payload.status,
-      previousStatus: payload.previousStatus,
-      note: payload.note,
-      updatedAt: payload.updatedAt
-    };
+// --- Accès à l'API admin (protégée par Cognito) --------------------------
+
+async function apiRequest(path, options = {}) {
+  const token = getIdToken();
+  if (!token) {
+    const error = new Error("Session expirée. Reconnectez-vous.");
+    error.status = 401;
+    throw error;
   }
 
-  const response = await fetch(`${API_BASE_URL.replace(/\/$/, "")}/orders/${encodeURIComponent(payload.orderNumber)}/status`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
+  let response;
+  try {
+    response = await fetch(`${ADMIN_API_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: token,
+        ...(options.headers || {})
+      }
+    });
+  } catch {
+    throw new Error("API injoignable. Vérifiez votre connexion.");
+  }
 
+  if (response.status === 401 || response.status === 403) {
+    const error = new Error("Session expirée. Reconnectez-vous.");
+    error.status = 401;
+    throw error;
+  }
+
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(`Erreur API ${response.status}`);
+    const error = new Error(data.message || `Erreur API ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
+  return data;
+}
 
-  const remoteOrder = await response.json();
+async function fetchOrders() {
+  const data = await apiRequest("/list/orders");
+  return Array.isArray(data.orders) ? data.orders : [];
+}
+
+async function updateOrderStatus(orderId, status) {
+  return apiRequest(`/update/${encodeURIComponent(orderId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ status })
+  });
+}
+
+function indexOrders(items) {
+  const result = {};
+  items.forEach((item) => {
+    const order = normalizeApiOrder(item);
+    if (order.orderNumber) {
+      result[order.orderNumber] = order;
+    }
+  });
+  return result;
+}
+
+// Adapte un item DynamoDB { orderId, status, createdAt, updatedAt } au modèle de l'UI.
+// Les champs absents côté backend (client, destination, transporteur) reçoivent un repli.
+function normalizeApiOrder(item) {
+  const orderId = String(item.orderId || item.orderNumber || "").trim();
+  const orderNumber = normalizeOrderNumber(orderId);
+  const status = statusLabels[item.status] ? item.status : "preparation";
   return {
-    ...(orders[payload.orderNumber] || createDraftOrder(payload.orderNumber)),
-    ...remoteOrder,
-    orderNumber: remoteOrder.orderNumber || payload.orderNumber,
-    status: remoteOrder.status || payload.status,
-    previousStatus: remoteOrder.previousStatus || payload.previousStatus,
-    updatedAt: remoteOrder.updatedAt || payload.updatedAt,
-    note: remoteOrder.note ?? payload.note
+    orderId,
+    orderNumber,
+    firstName: item.firstName || "Client",
+    lastName: item.lastName || "",
+    orderDate: item.orderDate || (item.createdAt ? String(item.createdAt).slice(0, 10) : ""),
+    status,
+    previousStatus: item.previousStatus || null,
+    carrier: item.carrier || "",
+    destination: item.destination || "",
+    updatedAt: item.updatedAt || item.createdAt || new Date().toISOString(),
+    note: item.note || ""
   };
 }
 
-function loadOrders() {
-  const saved = readStorage(STORAGE_KEY);
-  if (!saved) {
-    return { ...seedOrders };
-  }
-
-  try {
-    return migrateOrders(JSON.parse(saved));
-  } catch {
-    return { ...seedOrders };
-  }
-}
-
-function saveOrders(orders) {
-  writeStorage(STORAGE_KEY, JSON.stringify(orders));
-}
-
-function readStorage(key) {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writeStorage(key, value) {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    // The demo remains usable even if browser storage is disabled.
-  }
-}
-
-function migrateOrders(savedOrders) {
-  if (!savedOrders || typeof savedOrders !== "object" || Array.isArray(savedOrders)) {
-    return { ...seedOrders };
-  }
-
-  const migrated = { ...seedOrders };
-  Object.entries(savedOrders).forEach(([key, order]) => {
-    const orderNumber = normalizeOrderNumber(order.orderNumber || key);
-    migrated[orderNumber] = {
-      ...createDraftOrder(orderNumber),
-      ...seedOrders[orderNumber],
-      ...order,
-      orderNumber,
-      firstName: order.firstName || seedOrders[orderNumber]?.firstName || "Client",
-      lastName: order.lastName || seedOrders[orderNumber]?.lastName || "Démonstration",
-      orderDate: order.orderDate || seedOrders[orderNumber]?.orderDate || toDateInputValue(new Date())
-    };
-  });
-  return migrated;
-}
-
-function createSeedOrders() {
-  const rows = [
-    ["CMD-1001", "Camille", "Martin", "2026-07-01", "en_livraison", "ChronoShip", "Paris 11e", "Livreur affecté à la tournée du soir."],
-    ["CMD-1002", "Nina", "Bernard", "2026-06-30", "preparation", "ParcelNow", "Lyon 3e", "Étiquette créée."],
-    ["CMD-1003", "Hugo", "Petit", "2026-06-30", "livree", "ChronoShip", "Nantes Centre", "Remis contre signature."],
-    ["CMD-1004", "Lina", "Robert", "2026-06-29", "expedie", "FastColis", "Bordeaux", "Départ de l'entrepôt."],
-    ["CMD-1005", "Noah", "Richard", "2026-06-29", "incident", "ChronoShip", "Marseille 6e", "Adresse à vérifier."],
-    ["CMD-1006", "Emma", "Durand", "2026-06-28", "en_livraison", "ParcelNow", "Toulouse", "Créneau confirmé."],
-    ["CMD-1007", "Lucas", "Moreau", "2026-06-28", "preparation", "ChronoShip", "Lille", "Commande prioritaire."],
-    ["CMD-1008", "Chloé", "Simon", "2026-06-27", "livree", "FastColis", "Rennes", "Remis au gardien."],
-    ["CMD-1009", "Adam", "Laurent", "2026-06-27", "expedie", "ParcelNow", "Nice", "Tri régional terminé."],
-    ["CMD-1010", "Manon", "Lefebvre", "2026-06-26", "en_livraison", "ChronoShip", "Grenoble", "Livreur en approche."],
-    ["CMD-1011", "Jules", "Michel", "2026-06-26", "preparation", "FastColis", "Dijon", "En attente de collecte."],
-    ["CMD-1012", "Sarah", "Garcia", "2026-06-25", "livree", "ParcelNow", "Montpellier", "Livraison validée."],
-    ["CMD-1013", "Louis", "David", "2026-06-25", "expedie", "ChronoShip", "Strasbourg", "Colis transmis au transporteur."],
-    ["CMD-1014", "Inès", "Bertrand", "2026-06-24", "en_livraison", "FastColis", "Angers", "Tournée du matin."]
-  ];
-
-  return rows.reduce((accumulator, row, index) => {
-    const [orderNumber, firstName, lastName, orderDate, status, carrier, destination, note] = row;
-    accumulator[orderNumber] = {
-      orderNumber,
-      firstName,
-      lastName,
-      orderDate,
-      status,
-      previousStatus: status === "incident" ? "en_livraison" : null,
-      carrier,
-      destination,
-      updatedAt: new Date(Date.now() - index * 3600000).toISOString(),
-      note
-    };
-    return accumulator;
-  }, {});
-}
-
-function createDraftOrder(orderNumber) {
+// Fusionne la réponse de l'API (Attributes renvoyés par UpdateItem) avec la commande locale.
+function mergeOrder(existing, attributes, status, note, previousStatus) {
+  const attrs = attributes || {};
+  const nextStatus = attrs.status || status;
   return {
-    orderNumber,
-    firstName: "Client",
-    lastName: "Démonstration",
-    orderDate: toDateInputValue(new Date()),
-    status: "preparation",
-    previousStatus: null,
-    carrier: "À affecter",
-    destination: "Non renseignée",
-    updatedAt: new Date().toISOString(),
-    note: ""
+    ...existing,
+    status: nextStatus,
+    previousStatus: nextStatus === "annule" ? previousStatus : existing.previousStatus || null,
+    updatedAt: attrs.updatedAt || new Date().toISOString(),
+    note
   };
 }
 
@@ -863,10 +886,7 @@ function getDefaultOrderNumber(orders, preferredOrderNumber = "") {
   if (normalized && orders[normalized]) {
     return normalized;
   }
-  if (orders["CMD-1001"]) {
-    return "CMD-1001";
-  }
-  return Object.keys(orders)[0];
+  return Object.keys(orders)[0] || "";
 }
 
 function buildEvent(order, type = "ORDER_STATUS_UPDATED", previousStatus = null) {
@@ -879,12 +899,12 @@ function buildEvent(order, type = "ORDER_STATUS_UPDATED", previousStatus = null)
       orderNumber: order.orderNumber || "Commande",
       previousStatus,
       firstName: order.firstName || "Client",
-      lastName: order.lastName || "Démonstration",
-      orderDate: order.orderDate || toDateInputValue(new Date()),
+      lastName: order.lastName || "",
+      orderDate: order.orderDate || "",
       status: order.status || "preparation",
       label: statusLabels[order.status] || order.status || "Préparation",
-      carrier: order.carrier || "À affecter",
-      destination: order.destination || "Non renseignée",
+      carrier: order.carrier || "",
+      destination: order.destination || "",
       updatedAt: order.updatedAt || new Date().toISOString()
     }
   };
@@ -911,17 +931,16 @@ function normalizeOrderNumber(value) {
 }
 
 function formatCustomerName(order) {
-  return `${order.firstName || "Client"} ${order.lastName || "Démonstration"}`.trim();
-}
-
-function toDateInputValue(date) {
-  return date.toISOString().slice(0, 10);
+  return `${order.firstName || "Client"} ${order.lastName || ""}`.trim();
 }
 
 function formatDateOnly(value) {
-  const date = value ? new Date(`${value}T00:00:00`) : new Date();
+  if (!value) {
+    return "—";
+  }
+  const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) {
-    return "Non renseignée";
+    return "—";
   }
 
   return new Intl.DateTimeFormat("fr-FR", {
@@ -942,10 +961,10 @@ function formatDate(value) {
 }
 
 function getStatusTone(status) {
-  if (status === "livree") {
+  if (status === "livre") {
     return "success";
   }
-  if (status === "incident") {
+  if (status === "annule") {
     return "danger";
   }
   if (status === "preparation") {

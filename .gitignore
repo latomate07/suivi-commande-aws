@@ -7,6 +7,10 @@ coverage/
 out/
 .vite/
 
+# Variables d'environnement locales (Vite)
+.env.local
+.env.*.local
+
 # Backend / serverless
 .aws-sam/
 .serverless/

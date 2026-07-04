@@ -651,25 +651,53 @@ tbody tr:last-child td {
   gap: 10px;
 }
 
-.product-order-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.product-order-actions select {
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid #cfd8d1;
-  border-radius: var(--radius);
-  background: var(--surface-soft);
-  color: var(--text);
-}
-
 .empty-state {
   padding: 30px 20px;
   color: var(--muted);
   text-align: center;
+}
+
+.login {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(420px, 100%);
+}
+
+.login-card .brand-mark {
+  color: var(--accent-strong);
+}
+
+.login-error {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid #f3b9b3;
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.88rem;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.user-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-email {
+  max-width: 200px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toast {
