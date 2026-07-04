@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Cognito - User Pool pour l'authentification admin.
+
+Parameters:
+  ProjectName:
+    Type: String
+  EnvironmentName:
+    Type: String
+
+Resources:
+
+  AdminUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${ProjectName}-${EnvironmentName}-admin-pool"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+
+  AdminUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${ProjectName}-${EnvironmentName}-admin-client"
+      UserPoolId: !Ref AdminUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+
+Outputs:
+  AdminUserPoolId:
+    Value: !Ref AdminUserPool
+  AdminUserPoolArn:
+    Value: !GetAtt AdminUserPool.Arn
+  AdminUserPoolClientId:
+    Value: !Ref AdminUserPoolClient

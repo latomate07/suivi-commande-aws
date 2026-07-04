@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Application serverless de suivi de commande.
+Description: Application serverless de suivi de commande - Stack racine.
 
 Parameters:
   ProjectName:
@@ -10,382 +10,56 @@ Parameters:
     Type: String
     Default: dev
 
-Globals:
-  Function:
-    Runtime: nodejs20.x
-    MemorySize: 256
-    Timeout: 15
-    Tracing: Active
-    Environment:
-      Variables:
-        PROJECT_NAME: !Ref ProjectName
-        ENVIRONMENT_NAME: !Ref EnvironmentName
-
 Resources:
 
-  # ── API REST publique (sans auth) ────────────────────────────────
-  OrdersApi:
-    Type: AWS::Serverless::Api
+  DatabaseStack:
+    Type: AWS::CloudFormation::Stack
     Properties:
-      Name: !Sub "${ProjectName}-${EnvironmentName}-api"
-      StageName: !Ref EnvironmentName
-      EndpointConfiguration: REGIONAL
-      Cors:
-        AllowMethods: "'GET,POST,OPTIONS'"
-        AllowHeaders: "'Content-Type'"
-        AllowOrigin: "'*'"
+      TemplateURL: infra/database.yml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        EnvironmentName: !Ref EnvironmentName
 
-  GetOrdersFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        EntryPoints:
-          - src/handlers/getOrders.ts
-        Target: es2022
-        Format: cjs
-        Sourcemap: true
-        Minify: false
+  AuthStack:
+    Type: AWS::CloudFormation::Stack
     Properties:
-      CodeUri: backend
-      Handler: src/handlers/getOrders.handler
-      Description: Lambda de test pour valider le deploiement initial.
-      Events:
-        GetOrdersApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref OrdersApi
-            Path: /orders
-            Method: get
+      TemplateURL: infra/auth.yml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        EnvironmentName: !Ref EnvironmentName
 
-  CreateOrderFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        EntryPoints:
-          - src/handlers/createOrder.ts
-        Target: es2022
-        Format: cjs
-        Sourcemap: true
-        Minify: false
+  PublicApiStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: DatabaseStack
     Properties:
-      CodeUri: backend
-      Handler: src/handlers/createOrder.handler
-      Description: Cree une commande dans DynamoDB.
-      Environment:
-        Variables:
-          ORDERS_TABLE: !Ref OrdersTable
-      Policies:
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action: dynamodb:PutItem
-              Resource: !GetAtt OrdersTable.Arn
-      Events:
-        CreateOrderApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref OrdersApi
-            Path: /create/{orderId}
-            Method: post
+      TemplateURL: infra/public-api.yml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        EnvironmentName: !Ref EnvironmentName
+        OrdersTableName: !GetAtt DatabaseStack.Outputs.OrdersTableName
+        OrdersTableArn: !GetAtt DatabaseStack.Outputs.OrdersTableArn
 
-  TrackOrderFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        EntryPoints:
-          - src/handlers/trackOrder.ts
-        Target: es2022
-        Format: cjs
-        Sourcemap: true
-        Minify: false
+  AdminApiStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - DatabaseStack
+      - AuthStack
     Properties:
-      CodeUri: backend
-      Handler: src/handlers/trackOrder.handler
-      Description: Retourne le statut d'une commande par son orderId.
-      Environment:
-        Variables:
-          ORDERS_TABLE: !Ref OrdersTable
-      Policies:
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action: dynamodb:GetItem
-              Resource: !GetAtt OrdersTable.Arn
-      Events:
-        TrackOrderApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref OrdersApi
-            Path: /track/{orderId}
-            Method: get
+      TemplateURL: infra/admin-api.yml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        EnvironmentName: !Ref EnvironmentName
+        OrdersTableName: !GetAtt DatabaseStack.Outputs.OrdersTableName
+        OrdersTableArn: !GetAtt DatabaseStack.Outputs.OrdersTableArn
+        AdminUserPoolArn: !GetAtt AuthStack.Outputs.AdminUserPoolArn
 
-  # ── DynamoDB : commandes ──────────────────────────────────────────
-  OrdersTable:
-    Type: AWS::DynamoDB::Table
+  StaticSitesStack:
+    Type: AWS::CloudFormation::Stack
     Properties:
-      TableName: !Sub "${ProjectName}-${EnvironmentName}-orders"
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: orderId
-          AttributeType: S
-      KeySchema:
-        - AttributeName: orderId
-          KeyType: HASH
-
-  # ── Cognito : authentification back-office ────────────────────────
-  AdminUserPool:
-    Type: AWS::Cognito::UserPool
-    Properties:
-      UserPoolName: !Sub "${ProjectName}-${EnvironmentName}-admin-pool"
-      UsernameAttributes:
-        - email
-      AutoVerifiedAttributes:
-        - email
-      Policies:
-        PasswordPolicy:
-          MinimumLength: 8
-          RequireLowercase: true
-          RequireNumbers: true
-          RequireSymbols: false
-          RequireUppercase: true
-
-  AdminUserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      ClientName: !Sub "${ProjectName}-${EnvironmentName}-admin-client"
-      UserPoolId: !Ref AdminUserPool
-      GenerateSecret: false
-      ExplicitAuthFlows:
-        - ALLOW_USER_PASSWORD_AUTH
-        - ALLOW_REFRESH_TOKEN_AUTH
-      SupportedIdentityProviders:
-        - COGNITO
-
-  # ── API REST admin (Cognito requis) ──────────────────────────────
-  AdminApi:
-    Type: AWS::Serverless::Api
-    Properties:
-      Name: !Sub "${ProjectName}-${EnvironmentName}-admin-api"
-      StageName: !Ref EnvironmentName
-      EndpointConfiguration: REGIONAL
-      Cors:
-        AllowMethods: "'GET,PUT,OPTIONS'"
-        AllowHeaders: "'Content-Type,Authorization'"
-        AllowOrigin: "'*'"
-      Auth:
-        DefaultAuthorizer: CognitoAuthorizer
-        AddDefaultAuthorizerToCorsPreflight: false
-        Authorizers:
-          CognitoAuthorizer:
-            UserPoolArn: !GetAtt AdminUserPool.Arn
-
-  ListOrdersFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        EntryPoints:
-          - src/handlers/listOrders.ts
-        Target: es2022
-        Format: cjs
-        Sourcemap: true
-        Minify: false
-    Properties:
-      CodeUri: backend
-      Handler: src/handlers/listOrders.handler
-      Description: Liste toutes les commandes (back-office, protege par Cognito).
-      Environment:
-        Variables:
-          ORDERS_TABLE: !Ref OrdersTable
-      Policies:
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action: dynamodb:Scan
-              Resource: !GetAtt OrdersTable.Arn
-      Events:
-        ListOrdersApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref AdminApi
-            Path: /list/orders
-            Method: get
-
-  ListProductsFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        EntryPoints:
-          - src/handlers/listProducts.ts
-        Target: es2022
-        Format: cjs
-        Sourcemap: true
-        Minify: false
-    Properties:
-      CodeUri: backend
-      Handler: src/handlers/listProducts.handler
-      Description: Retourne le catalogue produits (donnees en dur, protege par Cognito).
-      Events:
-        ListProductsApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref AdminApi
-            Path: /list/products
-            Method: get
-
-  UpdateOrderFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        EntryPoints:
-          - src/handlers/updateOrder.ts
-        Target: es2022
-        Format: cjs
-        Sourcemap: true
-        Minify: false
-    Properties:
-      CodeUri: backend
-      Handler: src/handlers/updateOrder.handler
-      Description: Met a jour le statut d'une commande (back-office, protege par Cognito).
-      Environment:
-        Variables:
-          ORDERS_TABLE: !Ref OrdersTable
-      Policies:
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action: dynamodb:UpdateItem
-              Resource: !GetAtt OrdersTable.Arn
-      Events:
-        UpdateOrderApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref AdminApi
-            Path: /update/{orderId}
-            Method: put
-
-  # ── S3 + CloudFront : sites statiques ────────────────────────────
-  StaticSiteOAC:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub "${ProjectName}-${EnvironmentName}-s3-oac"
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  # web_suivi
-  WebSuiviBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "${ProjectName}-${EnvironmentName}-web-suivi"
-
-  WebSuiviBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref WebSuiviBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
-            Action: s3:GetObject
-            Resource: !Sub "${WebSuiviBucket.Arn}/*"
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebSuiviDistribution}"
-
-  WebSuiviDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        DefaultRootObject: index.html
-        Enabled: true
-        HttpVersion: http2
-        PriceClass: PriceClass_100
-        Origins:
-          - Id: S3WebSuivi
-            DomainName: !GetAtt WebSuiviBucket.RegionalDomainName
-            OriginAccessControlId: !Ref StaticSiteOAC
-            S3OriginConfig:
-              OriginAccessIdentity: ""
-        DefaultCacheBehavior:
-          TargetOriginId: S3WebSuivi
-          ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-          AllowedMethods:
-            - GET
-            - HEAD
-          CachedMethods:
-            - GET
-            - HEAD
-        CustomErrorResponses:
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-
-  # web_stock
-  WebStockBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "${ProjectName}-${EnvironmentName}-web-stock"
-
-  WebStockBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref WebStockBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
-            Action: s3:GetObject
-            Resource: !Sub "${WebStockBucket.Arn}/*"
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebStockDistribution}"
-
-  WebStockDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        DefaultRootObject: index.html
-        Enabled: true
-        HttpVersion: http2
-        PriceClass: PriceClass_100
-        Origins:
-          - Id: S3WebStock
-            DomainName: !GetAtt WebStockBucket.RegionalDomainName
-            OriginAccessControlId: !Ref StaticSiteOAC
-            S3OriginConfig:
-              OriginAccessIdentity: ""
-        DefaultCacheBehavior:
-          TargetOriginId: S3WebStock
-          ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-          AllowedMethods:
-            - GET
-            - HEAD
-          CachedMethods:
-            - GET
-            - HEAD
-        CustomErrorResponses:
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
+      TemplateURL: infra/static-sites.yml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        EnvironmentName: !Ref EnvironmentName
 
 Outputs:
   ProjectName:
@@ -396,43 +70,43 @@ Outputs:
   # API publique
   PublicApiUrl:
     Description: URL de base de l'API publique
-    Value: !Sub "https://${OrdersApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}"
+    Value: !GetAtt PublicApiStack.Outputs.PublicApiUrl
   CreateOrderUrl:
     Description: POST /create/{orderId}
-    Value: !Sub "https://${OrdersApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}/create/{orderId}"
+    Value: !GetAtt PublicApiStack.Outputs.CreateOrderUrl
   TrackOrderUrl:
     Description: GET /track/{orderId}
-    Value: !Sub "https://${OrdersApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}/track/{orderId}"
+    Value: !GetAtt PublicApiStack.Outputs.TrackOrderUrl
 
   # API admin (Cognito)
   AdminApiUrl:
     Description: URL de base de l'API admin (Authorization header requis)
-    Value: !Sub "https://${AdminApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}"
+    Value: !GetAtt AdminApiStack.Outputs.AdminApiUrl
   AdminUserPoolId:
     Description: ID du User Pool Cognito
-    Value: !Ref AdminUserPool
+    Value: !GetAtt AuthStack.Outputs.AdminUserPoolId
   AdminUserPoolClientId:
     Description: ID du client Cognito (pour l'auth depuis le front)
-    Value: !Ref AdminUserPoolClient
+    Value: !GetAtt AuthStack.Outputs.AdminUserPoolClientId
 
   # web_suivi
   WebSuiviUrl:
     Description: URL CloudFront de web_suivi
-    Value: !Sub "https://${WebSuiviDistribution.DomainName}"
+    Value: !GetAtt StaticSitesStack.Outputs.WebSuiviUrl
   WebSuiviBucketName:
     Description: Bucket S3 de web_suivi (pour s3 sync)
-    Value: !Ref WebSuiviBucket
+    Value: !GetAtt StaticSitesStack.Outputs.WebSuiviBucketName
   WebSuiviDistributionId:
     Description: ID de la distribution CloudFront de web_suivi (pour invalidation)
-    Value: !Ref WebSuiviDistribution
+    Value: !GetAtt StaticSitesStack.Outputs.WebSuiviDistributionId
 
   # web_stock
   WebStockUrl:
     Description: URL CloudFront de web_stock
-    Value: !Sub "https://${WebStockDistribution.DomainName}"
+    Value: !GetAtt StaticSitesStack.Outputs.WebStockUrl
   WebStockBucketName:
     Description: Bucket S3 de web_stock (pour s3 sync)
-    Value: !Ref WebStockBucket
+    Value: !GetAtt StaticSitesStack.Outputs.WebStockBucketName
   WebStockDistributionId:
     Description: ID de la distribution CloudFront de web_stock (pour invalidation)
-    Value: !Ref WebStockDistribution
+    Value: !GetAtt StaticSitesStack.Outputs.WebStockDistributionId

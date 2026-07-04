@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: S3 + CloudFront - sites statiques web_suivi et web_stock.
+
+Parameters:
+  ProjectName:
+    Type: String
+  EnvironmentName:
+    Type: String
+
+Resources:
+
+  StaticSiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${ProjectName}-${EnvironmentName}-s3-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # ── web_suivi ────────────────────────────────────────────────────────
+
+  WebSuiviBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-${EnvironmentName}-web-suivi"
+
+  WebSuiviBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebSuiviBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${WebSuiviBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebSuiviDistribution}"
+
+  WebSuiviDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: S3WebSuivi
+            DomainName: !GetAtt WebSuiviBucket.RegionalDomainName
+            OriginAccessControlId: !Ref StaticSiteOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: S3WebSuivi
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  # ── web_stock ────────────────────────────────────────────────────────
+
+  WebStockBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-${EnvironmentName}-web-stock"
+
+  WebStockBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebStockBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${WebStockBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebStockDistribution}"
+
+  WebStockDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: S3WebStock
+            DomainName: !GetAtt WebStockBucket.RegionalDomainName
+            OriginAccessControlId: !Ref StaticSiteOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: S3WebStock
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+Outputs:
+  WebSuiviUrl:
+    Description: URL CloudFront de web_suivi
+    Value: !Sub "https://${WebSuiviDistribution.DomainName}"
+  WebSuiviBucketName:
+    Description: Bucket S3 de web_suivi (pour s3 sync)
+    Value: !Ref WebSuiviBucket
+  WebSuiviDistributionId:
+    Description: ID de la distribution CloudFront de web_suivi (pour invalidation)
+    Value: !Ref WebSuiviDistribution
+
+  WebStockUrl:
+    Description: URL CloudFront de web_stock
+    Value: !Sub "https://${WebStockDistribution.DomainName}"
+  WebStockBucketName:
+    Description: Bucket S3 de web_stock (pour s3 sync)
+    Value: !Ref WebStockBucket
+  WebStockDistributionId:
+    Description: ID de la distribution CloudFront de web_stock (pour invalidation)
+    Value: !Ref WebStockDistribution

@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: API publique (sans auth) + Lambdas de suivi commande.
+
+Parameters:
+  ProjectName:
+    Type: String
+  EnvironmentName:
+    Type: String
+  OrdersTableName:
+    Type: String
+  OrdersTableArn:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    MemorySize: 256
+    Timeout: 15
+    Tracing: Active
+    Environment:
+      Variables:
+        PROJECT_NAME: !Ref ProjectName
+        ENVIRONMENT_NAME: !Ref EnvironmentName
+
+Resources:
+
+  OrdersApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvironmentName}-api"
+      StageName: !Ref EnvironmentName
+      EndpointConfiguration: REGIONAL
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type'"
+        AllowOrigin: "'*'"
+
+  GetOrdersFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/getOrders.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: ../backend
+      Handler: src/handlers/getOrders.handler
+      Description: Lambda de test pour valider le deploiement initial.
+      Events:
+        GetOrdersApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrdersApi
+            Path: /orders
+            Method: get
+
+  CreateOrderFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/createOrder.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: ../backend
+      Handler: src/handlers/createOrder.handler
+      Description: Cree une commande dans DynamoDB.
+      Environment:
+        Variables:
+          ORDERS_TABLE: !Ref OrdersTableName
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !Ref OrdersTableArn
+      Events:
+        CreateOrderApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrdersApi
+            Path: /create/{orderId}
+            Method: post
+
+  TrackOrderFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/trackOrder.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: ../backend
+      Handler: src/handlers/trackOrder.handler
+      Description: Retourne le statut d'une commande par son orderId.
+      Environment:
+        Variables:
+          ORDERS_TABLE: !Ref OrdersTableName
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !Ref OrdersTableArn
+      Events:
+        TrackOrderApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrdersApi
+            Path: /track/{orderId}
+            Method: get
+
+Outputs:
+  PublicApiUrl:
+    Description: URL de base de l'API publique
+    Value: !Sub "https://${OrdersApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}"
+  CreateOrderUrl:
+    Description: POST /create/{orderId}
+    Value: !Sub "https://${OrdersApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}/create/{orderId}"
+  TrackOrderUrl:
+    Description: GET /track/{orderId}
+    Value: !Sub "https://${OrdersApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}/track/{orderId}"

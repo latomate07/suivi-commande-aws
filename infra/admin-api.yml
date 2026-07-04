@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: API admin (Cognito) + Lambdas de gestion back-office.
+
+Parameters:
+  ProjectName:
+    Type: String
+  EnvironmentName:
+    Type: String
+  OrdersTableName:
+    Type: String
+  OrdersTableArn:
+    Type: String
+  AdminUserPoolArn:
+    Type: String
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    MemorySize: 256
+    Timeout: 15
+    Tracing: Active
+    Environment:
+      Variables:
+        PROJECT_NAME: !Ref ProjectName
+        ENVIRONMENT_NAME: !Ref EnvironmentName
+
+Resources:
+
+  AdminApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvironmentName}-admin-api"
+      StageName: !Ref EnvironmentName
+      EndpointConfiguration: REGIONAL
+      Cors:
+        AllowMethods: "'GET,PUT,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !Ref AdminUserPoolArn
+
+  ListOrdersFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/listOrders.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: ../backend
+      Handler: src/handlers/listOrders.handler
+      Description: Liste toutes les commandes (back-office, protege par Cognito).
+      Environment:
+        Variables:
+          ORDERS_TABLE: !Ref OrdersTableName
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:Scan
+              Resource: !Ref OrdersTableArn
+      Events:
+        ListOrdersApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AdminApi
+            Path: /list/orders
+            Method: get
+
+  ListProductsFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/listProducts.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: ../backend
+      Handler: src/handlers/listProducts.handler
+      Description: Retourne le catalogue produits (donnees en dur, protege par Cognito).
+      Events:
+        ListProductsApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AdminApi
+            Path: /list/products
+            Method: get
+
+  UpdateOrderFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/handlers/updateOrder.ts
+        Target: es2022
+        Format: cjs
+        Sourcemap: true
+        Minify: false
+    Properties:
+      CodeUri: ../backend
+      Handler: src/handlers/updateOrder.handler
+      Description: Met a jour le statut d'une commande (back-office, protege par Cognito).
+      Environment:
+        Variables:
+          ORDERS_TABLE: !Ref OrdersTableName
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !Ref OrdersTableArn
+      Events:
+        UpdateOrderApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AdminApi
+            Path: /update/{orderId}
+            Method: put
+
+Outputs:
+  AdminApiUrl:
+    Description: URL de base de l'API admin (Authorization header requis)
+    Value: !Sub "https://${AdminApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}"
