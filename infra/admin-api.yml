@@ -27,12 +27,43 @@ Globals:
 
 Resources:
 
+  # ── Log Groups ──────────────────────────────────────────────────────
+
+  AdminApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${ProjectName}-${EnvironmentName}-admin-api"
+      RetentionInDays: 14
+
+  ListOrdersFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-list-orders"
+      RetentionInDays: 14
+
+  ListProductsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-list-products"
+      RetentionInDays: 14
+
+  UpdateOrderFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-update-order"
+      RetentionInDays: 14
+
+  # ── API & Lambdas ───────────────────────────────────────────────────
+
   AdminApi:
     Type: AWS::Serverless::Api
+    DependsOn: AdminApiAccessLogGroup
     Properties:
       Name: !Sub "${ProjectName}-${EnvironmentName}-admin-api"
       StageName: !Ref EnvironmentName
       EndpointConfiguration: REGIONAL
+      AccessLogSetting:
+        DestinationArn: !GetAtt AdminApiAccessLogGroup.Arn
       Cors:
         AllowMethods: "'GET,PUT,OPTIONS'"
         AllowHeaders: "'Content-Type,Authorization'"
@@ -46,6 +77,7 @@ Resources:
 
   ListOrdersFunction:
     Type: AWS::Serverless::Function
+    DependsOn: ListOrdersFunctionLogGroup
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -56,6 +88,7 @@ Resources:
         Sourcemap: true
         Minify: false
     Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-list-orders"
       CodeUri: ../backend
       Handler: src/handlers/listOrders.handler
       Description: Liste toutes les commandes (back-office, protege par Cognito).
@@ -78,6 +111,7 @@ Resources:
 
   ListProductsFunction:
     Type: AWS::Serverless::Function
+    DependsOn: ListProductsFunctionLogGroup
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -88,6 +122,7 @@ Resources:
         Sourcemap: true
         Minify: false
     Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-list-products"
       CodeUri: ../backend
       Handler: src/handlers/listProducts.handler
       Description: Retourne le catalogue produits (donnees en dur, protege par Cognito).
@@ -101,6 +136,7 @@ Resources:
 
   UpdateOrderFunction:
     Type: AWS::Serverless::Function
+    DependsOn: UpdateOrderFunctionLogGroup
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -111,6 +147,7 @@ Resources:
         Sourcemap: true
         Minify: false
     Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-update-order"
       CodeUri: ../backend
       Handler: src/handlers/updateOrder.handler
       Description: Met a jour le statut d'une commande (back-office, protege par Cognito).

@@ -25,12 +25,43 @@ Globals:
 
 Resources:
 
+  # ── Log Groups ──────────────────────────────────────────────────────
+
+  OrdersApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${ProjectName}-${EnvironmentName}-api"
+      RetentionInDays: 14
+
+  GetOrdersFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-get-orders"
+      RetentionInDays: 14
+
+  CreateOrderFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-create-order"
+      RetentionInDays: 14
+
+  TrackOrderFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvironmentName}-track-order"
+      RetentionInDays: 14
+
+  # ── API & Lambdas ───────────────────────────────────────────────────
+
   OrdersApi:
     Type: AWS::Serverless::Api
+    DependsOn: OrdersApiAccessLogGroup
     Properties:
       Name: !Sub "${ProjectName}-${EnvironmentName}-api"
       StageName: !Ref EnvironmentName
       EndpointConfiguration: REGIONAL
+      AccessLogSetting:
+        DestinationArn: !GetAtt OrdersApiAccessLogGroup.Arn
       Cors:
         AllowMethods: "'GET,POST,OPTIONS'"
         AllowHeaders: "'Content-Type'"
@@ -38,6 +69,7 @@ Resources:
 
   GetOrdersFunction:
     Type: AWS::Serverless::Function
+    DependsOn: GetOrdersFunctionLogGroup
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -48,6 +80,7 @@ Resources:
         Sourcemap: true
         Minify: false
     Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-get-orders"
       CodeUri: ../backend
       Handler: src/handlers/getOrders.handler
       Description: Lambda de test pour valider le deploiement initial.
@@ -61,6 +94,7 @@ Resources:
 
   CreateOrderFunction:
     Type: AWS::Serverless::Function
+    DependsOn: CreateOrderFunctionLogGroup
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -71,6 +105,7 @@ Resources:
         Sourcemap: true
         Minify: false
     Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-create-order"
       CodeUri: ../backend
       Handler: src/handlers/createOrder.handler
       Description: Cree une commande dans DynamoDB.
@@ -93,6 +128,7 @@ Resources:
 
   TrackOrderFunction:
     Type: AWS::Serverless::Function
+    DependsOn: TrackOrderFunctionLogGroup
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -103,6 +139,7 @@ Resources:
         Sourcemap: true
         Minify: false
     Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvironmentName}-track-order"
       CodeUri: ../backend
       Handler: src/handlers/trackOrder.handler
       Description: Retourne le statut d'une commande par son orderId.
